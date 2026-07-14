@@ -1,7 +1,9 @@
 import os
 import json
 import requests
+import re
 from google.adk import Agent
+from google.genai import types
 
 # Import modular telemetry, logs, and redaction utilities
 from utils.telemetry import redact_pii, logger, tracer
@@ -15,11 +17,54 @@ from agents.teaching import teaching_agent
 from agents.quiz import quiz_agent, update_learning_progress, db
 
 # ==========================================
+# 🛡️ ADK-Native Model Armor Guardrails Policy Callback
+# ==========================================
+def model_armor_guardrail_callback(agent, callback_context) -> types.Content | None:
+    """
+    An ADK-native Policy Guardrail Callback inspired by Google Cloud Model Armor.
+    Intercepts the execution flow to perform Content Safety, Jailbreak Detection, and PII checks.
+    """
+    user_content = callback_context.user_content
+    if not user_content or not hasattr(user_content, "parts"):
+        return None
+
+    for part in user_content.parts:
+        text = getattr(part, "text", "") or ""
+        if not text:
+            continue
+
+        # Model Armor: Scan for malicious jailbreak or system prompt injection attempts
+        jailbreak_keywords = ["ignore previous instructions", "system prompt", "jailbreak", "bypass safety"]
+        if any(keyword in text.lower() for keyword in jailbreak_keywords):
+            # Short-circuit execution by returning a standard blocker response
+            logger.warning("[Model Armor Guardrail Action]: Malicious prompt or jailbreak attempt blocked.")
+            return types.Content(
+                role="model",
+                parts=[types.Part.from_text(text="⚠️ [Model Armor Security Alert]: Security policy violation. Your input query was flagged as a potential injection or jailbreak attempt and has been blocked.")]
+            )
+
+        # Model Armor: Perform PII Redaction
+        cleaned_text = text
+        # Redact typical credit card numbers
+        cleaned_text = re.sub(r'\b(?:\d[ -]*?){13,16}\b', '[REDACTED_CARD]', cleaned_text)
+        # Redact emails
+        cleaned_text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[REDACTED_EMAIL]', cleaned_text)
+        # Redact typical SSNs
+        cleaned_text = re.sub(r'\b\d{3}-\d{2}-\d{4}\b', '[REDACTED_SSN]', cleaned_text)
+        
+        if cleaned_text != text:
+            part.text = cleaned_text
+            logger.info("Model Armor Policy: Redacted sensitive PII from incoming input content.")
+
+    return None
+
+
+# ==========================================
 # 👑 Unified Multi-Agent Root Orchestrator
 # ==========================================
 root_agent = Agent(
     name="L200StudyOrchestrator",
-    model="gemini-2.5-flash",
+    model="gemini-2.5-pro",
     instruction=(
         "You are the L200 Study Companion Orchestrator, coordinating an enterprise-grade education graph consisting of:\n"
         "- CoachingAgent: Inspects struggles and provides motivational correction.\n"
@@ -27,7 +72,8 @@ root_agent = Agent(
         "- QuizAgent: Coordinates assessments and updates user learning progress.\n\n"
         "Ensure the user gets a supportive and cohesive learning experience."
     ),
-    sub_agents=[coaching_agent, teaching_agent, quiz_agent]
+    sub_agents=[coaching_agent, teaching_agent, quiz_agent],
+    before_agent_callback=model_armor_guardrail_callback
 )
 
 # ==========================================

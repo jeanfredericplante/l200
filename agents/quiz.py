@@ -46,9 +46,11 @@ def update_learning_progress(module_id: str) -> str:
         f"{valid_ids_str}. For example, call this tool with 's1_m1' to complete Module 1."
     )
 
+from google.adk.tools import FunctionTool
+
 quiz_agent = Agent(
     name="QuizAgent",
     model="gemini-2.5-flash",
-    tools=[update_learning_progress],
+    tools=[FunctionTool(update_learning_progress, require_confirmation=True)],
     instruction="You are the L200 Quiz Agent. Your job is to evaluate student answers, deliver challenging multiple-choice questions, and log successful attempts to update learning status."
 )
