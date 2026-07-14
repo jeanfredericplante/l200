@@ -70,4 +70,70 @@ Once running, navigate to **`http://localhost:8080`** in your browser to explore
 
 ---
 
+## ☁️ Infrastructure as Code (IaC) with Terraform
+
+A production-grade, highly secure Terraform configuration is provided in the repository to automate provisioning of all required cloud assets:
+
+* **`main.tf`**: Configures Cloud Run (fully containerized microservice), Artifact Registry docker repo, Firestore Native instance, and Secret Manager bindings.
+* **`variables.tf`**: Exposes parameters like `project_id`, `region`, and service labels.
+* **`outputs.tf`**: Outputs secure public HTTPS endpoints and registry paths.
+
+### 🚀 Provisioning Steps:
+1. Initialize Terraform provider:
+   ```bash
+   terraform init
+   ```
+2. Create and fill a `terraform.tfvars` (copying the provided example):
+   ```bash
+   cp terraform.tfvars.example terraform.tfvars
+   # Edit terraform.tfvars and add your GCP project_id
+   ```
+3. Run a planning phase to preview creations:
+   ```bash
+   terraform plan -out=tfplan
+   ```
+4. Securely apply resources:
+   ```bash
+   terraform apply tfplan
+   ```
+
+---
+
+## 🔑 Secure Secret Management & Secret Manager Integration
+
+The application securely avoids hardcoded API keys by employing a hierarchical programmatic credential loader:
+
+1. **Client Header Input:** Fetches from the interactive web console.
+2. **Environment Variable Fallback:** Reads `GEMINI_API_KEY` from system env variables.
+3. **Google Secret Manager (Programmatic Fallback):** Programmatically resolves the API key by querying Google Secret Manager via `google-cloud-secret-manager` API:
+   ```python
+   # Programmatic resolution in main.py
+   client = secretmanager.SecretManagerServiceClient()
+   name = f"projects/{project_id}/secrets/gemini-api-key/versions/latest"
+   response = client.access_secret_version(request={"name": name})
+   ```
+
+---
+
+## 🛠️ Deployment with ADK / Agent CLI
+
+The Gemini L200 Study Hub is fully compliant with Google ADK packaging specifications. To deploy the microservice to **Vertex AI Agent Engine (Agent Platform)** using the **ADK CLI**:
+
+1. Stage source code to a clean build directory:
+   ```bash
+   mkdir -p l200_staging
+   cp agent.py agent_definition.py db_manager.py main.py l200_staging/
+   ```
+2. Deploy directly using the `adk deploy` tool:
+   ```bash
+   adk deploy agent_engine \
+     --project=your-gcp-project-id \
+     --region=us-central1 \
+     --display_name="L200 Study Orchestrator" \
+     l200_staging/
+   ```
+
+---
+
 *Powered by Google Antigravity & the Google Agent Development Kit.*
+

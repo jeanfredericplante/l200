@@ -44,6 +44,43 @@ class QuizSubmitRequest(BaseModel):
     module_id: str
     answer: str
 
+def fetch_secret_from_manager(secret_id: str, project_id: str = None) -> str:
+    """Attempts to programmatically retrieve a secret from Google Secret Manager."""
+    try:
+        from google.cloud import secretmanager
+        import google.auth
+        client = secretmanager.SecretManagerServiceClient()
+        
+        if not project_id:
+            try:
+                _, project_id = google.auth.default()
+            except Exception:
+                project_id = os.getenv("GCP_PROJECT", "")
+        
+        if not project_id:
+            return ""
+            
+        name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        return response.payload.data.decode("UTF-8").strip()
+    except Exception as e:
+        # Graceful fallback if Secret Manager authentication or secret is not available
+        return ""
+
+
+def get_gemini_api_key(req_key: str = "") -> str:
+    """Retrieves the Gemini API key, falling back through client input, environment, and Secret Manager."""
+    key = req_key.strip()
+    if key:
+        return key
+    
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if key:
+        return key
+    
+    return fetch_secret_from_manager("gemini-api-key")
+
+
 # API Routes
 @app.get("/api/state")
 def get_state_endpoint():
@@ -57,7 +94,7 @@ def get_state_endpoint():
 def update_module_endpoint(req: ModuleUpdateRequest):
     """Manually toggles completion of a specific L200 module from the Learning Map."""
     if req.module_id not in L200_SYLLABUS:
-        raise HTTPException(status_code=400, detail="Invalid module ID.")
+         raise HTTPException(status_code=400, detail="Invalid module ID.")
     try:
         updated_state = db.update_module_status(req.module_id, req.completed)
         return updated_state
@@ -70,8 +107,8 @@ def chat_endpoint(req: ChatRequest):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Prompt is empty.")
     
-    # Securely feed api_key from client or fallback to system environment
-    api_key = req.api_key.strip() or os.getenv("GEMINI_API_KEY", "")
+    # Securely retrieve API Key programmatically with fallback to Secret Manager
+    api_key = get_gemini_api_key(req.api_key)
     
     try:
         result = orchestrate_agents(req.message, api_key=api_key)
