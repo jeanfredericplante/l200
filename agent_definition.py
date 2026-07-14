@@ -1,4 +1,9 @@
 import os
+# Enable OpenTelemetry semantic conventions for Generative AI
+os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "gen_ai_latest_experimental"
+# Ensure the full message content (prompts & responses) is captured in the trace events
+os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "EVENT_ONLY"
+
 import requests
 import json
 import logging
