@@ -256,11 +256,11 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
 
 def matched_keywords(module_id: str) -> list:
     kw_map = {
-        "s1_m1": ["antigravity", "agy", "accelerate", "build"],
-        "s1_m2": ["adk", "python", "deploy", "agent development kit"],
-        "s1_m3": ["hill climbing", "evaluate", "improve", "tuning"],
-        "s2_m1": ["model armor", "workspace data", "grounding", "safety"],
-        "s2_m2": ["add agents", "workspace", "gmail", "docs"],
-        "s2_m3": ["govern", "rbac", "security", "access"]
+        "s1_m1": ["antigravity", "agy", "accelerate", "build", "m1", "module 1", "module1"],
+        "s1_m2": ["adk", "python", "deploy", "agent development kit", "m2", "module 2", "module2"],
+        "s1_m3": ["hill climbing", "evaluate", "improve", "tuning", "m3", "module 3", "module3"],
+        "s2_m1": ["model armor", "workspace data", "grounding", "safety", "m4", "module 4", "module4"],
+        "s2_m2": ["add agents", "workspace", "gmail", "docs", "m5", "module 5", "module5"],
+        "s2_m3": ["govern", "rbac", "security", "access", "m6", "module 6", "module6"]
     }
     return kw_map.get(module_id, [])
