@@ -1,16 +1,109 @@
 import os
+import re
+import json
+import logging
+
+# ==========================================
+# 🔐 PII Redaction Mechanism
+# ==========================================
+EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+PHONE_REGEX = re.compile(r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b")
+SSN_REGEX = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+CREDIT_CARD_REGEX = re.compile(r"\b(?:\d[ -]*?){13,16}\b")
+
+def redact_pii(text: str) -> str:
+    """Redacts email addresses, phone numbers, SSNs, and credit cards from text to preserve user privacy."""
+    if not isinstance(text, str):
+        return text
+    text = EMAIL_REGEX.sub("[REDACTED_EMAIL]", text)
+    text = PHONE_REGEX.sub("[REDACTED_PHONE]", text)
+    text = SSN_REGEX.sub("[REDACTED_SSN]", text)
+    text = CREDIT_CARD_REGEX.sub("[REDACTED_CREDIT_CARD]", text)
+    return text
+
+# ==========================================
+# 📊 Structured JSON Logging System
+# ==========================================
+class StructuredJSONFormatter(logging.Formatter):
+    """Custom formatter to output structured JSON logs with PII redaction and active OpenTelemetry tracing context."""
+    def format(self, record):
+        # Base JSON log structure
+        log_record = {
+            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
+            "severity": record.levelname,
+            "logger": record.name,
+            "message": redact_pii(record.getMessage()),
+        }
+        
+        # Exception formatting with safety redact
+        if record.exc_info:
+            log_record["exception"] = redact_pii(self.formatException(record.exc_info))
+            
+        # Intent-vs-Outcome logging fields
+        if hasattr(record, "intent"):
+            log_record["intent"] = redact_pii(record.intent)
+        if hasattr(record, "outcome"):
+            log_record["outcome"] = redact_pii(record.outcome)
+        if hasattr(record, "user_id"):
+            log_record["user_id"] = redact_pii(record.user_id)
+            
+        # Inject active trace context from OpenTelemetry
+        try:
+            from opentelemetry import trace
+            current_span = trace.get_current_span()
+            if current_span and current_span.get_span_context().is_valid:
+                trace_id = current_span.get_span_context().trace_id
+                log_record["trace_id"] = f"{trace_id:x}"
+        except Exception:
+            pass
+            
+        return json.dumps(log_record)
+
+# Configure the active Logger to emit Structured JSON Logs
+logger = logging.getLogger("agent_definition")
+handler = logging.StreamHandler()
+handler.setFormatter(StructuredJSONFormatter())
+logger.handlers.clear()
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
+# Prevent propagation from outputting duplicate standard unformatted logs
+logger.propagate = False
+
+# ==========================================
+# 🌌 OpenTelemetry Setup & Tracer Configuration
+# ==========================================
 # Enable OpenTelemetry semantic conventions for Generative AI
 os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "gen_ai_latest_experimental"
 # Ensure the full message content (prompts & responses) is captured in the trace events
 os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "EVENT_ONLY"
 
+tracer = None
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+    # Attempt to initialize tracer provider if not already set up
+    provider = trace.get_tracer_provider()
+    if not hasattr(provider, "add_span_processor"):
+        provider = TracerProvider()
+        try:
+            processor = BatchSpanProcessor(OTLPSpanExporter())
+            provider.add_span_processor(processor)
+        except Exception as e:
+            logger.warning(f"Failed to add OTLPSpanExporter: {str(e)}")
+        trace.set_tracer_provider(provider)
+    
+    tracer = trace.get_tracer("l200_study_companion")
+except Exception as e:
+    logger.warning(f"OpenTelemetry initialization skipped: {str(e)}")
+
 import requests
 import json
-import logging
 from google.adk import Agent
 from .db_manager import DBManager
 
-logger = logging.getLogger("agent_definition")
 db = DBManager()
 
 # ==========================================
@@ -314,117 +407,169 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
     Analyzes inputs for struggle keywords to log implicit memories.
     Uses Direct Gemini API if a key is provided; falls back to an intelligent local engine.
     """
-    state = db.get_state(user_id)
-    user_prompt_lower = user_message.lower()
-    
-    # 1. 📋 Coaching Agent: Implicit Struggle Analysis
-    detected_gaps = []
-    struggle_topics_map = {
-        "antigravity": ("Antigravity CLI (agy)", "medium"),
-        "agy": ("Antigravity CLI (agy)", "medium"),
-        "skill.yaml": ("Declarative skill configs", "high"),
-        "adk": ("ADK Python Class definitions", "high"),
-        "tool": ("ADK Tool registration", "medium"),
-        "hill climbing": ("Hill Climbing prompt optimization", "high"),
-        "evaluation": ("Grading rubrics & validation", "medium"),
-        "model armor": ("Model Armor config", "high"),
-        "grounding": ("Workspace data grounding", "high"),
-        "rbac": ("Access governance & service accounts", "high"),
-        "governance": ("Access governance & service accounts", "high"),
-    }
-    
-    for kw, (struggle_title, severity) in struggle_topics_map.items():
-        if kw in user_prompt_lower:
-            detected_gaps.append(struggle_title)
-            db.log_struggle(struggle_title, severity, user_id)
-            
-    # Refresh state after logging struggles
-    state = db.get_state(user_id)
+    # Redact PII from user inputs to protect user privacy
+    clean_message = redact_pii(user_message)
+    user_prompt_lower = clean_message.lower()
 
-    # 2. 📝 Quiz Agent: Trigger check
+    # Determine user intent
+    intent = "chat_and_orchestrate"
     is_quiz_request = any(word in user_prompt_lower for word in ["quiz", "test me", "exam", "question", "test"])
-    
-    # 3. Handle live Gemini API or local intelligent routing
-    if api_key:
-        logger.info("Using Live Gemini API Mode for Agent orchestrator.")
-        system_prompt = (
-            "You are coordinating an L200 Study Companion multi-agent platform consisting of:\n"
-            "- TeachingAgent: Delivers lectures, syllabus overviews, and links.\n"
-            "- CoachingAgent: Inspects struggles and provides motivational correction.\n"
-            "- QuizAgent: Asks mock questions.\n\n"
-            f"Active student struggles: {json.dumps([s['topic'] for s in state['active_struggles'] if s['status']=='active'])}\n"
-            f"Progress state: {state['overall_progress_percent']}% complete. Course Syllabus: {json.dumps(L200_SYLLABUS)}\n\n"
-            "Represent the subagents transparently in your response. Combine their thoughts like this:\n"
-            "📋 **[Coaching Agent Insights]** ...\n"
-            "📘 **[Teaching Agent Lecture]** ...\n"
-            "If the user wants a test/quiz, generate a custom multiple-choice question tailored to their active struggles or current module, labeled under:\n"
-            "📝 **[Quiz Agent Question]** ..."
-        )
-        
-        full_prompt = f"{system_prompt}\n\nStudent Message: {user_message}\n\nAgent responses:"
-        response_text = _query_gemini_api(full_prompt, api_key)
-        
-    else:
-        logger.info("Using Local Intelligent Mode (Rule-based routing).")
-        if is_quiz_request:
-            selected_module = "s1_m1"
-            for m_id in L200_SYLLABUS.keys():
-                if not state["modules"][m_id]["completed"]:
-                    selected_module = m_id
-                    break
-            
-            content = L200_SYLLABUS[selected_module]
-            q_info = content["quiz_question"]
-            
-            response_text = (
-                f"📋 **[Coaching Agent]** I noticed you're ready for an assessment on **{content['title']}**! Let's see what you've mastered.\n\n"
-                f"📝 **[Quiz Agent Question]**\n"
-                f"**Module: {content['title']}**\n\n"
-                f"{q_info['question']}\n\n"
-                f"{chr(10).join(q_info['options'])}\n\n"
-                f"*Reply with your answer (e.g., 'The answer is B') to test your mastery!*"
-            )
-        else:
-            matched_syllabus = False
-            for m_id, content in L200_SYLLABUS.items():
-                if m_id in user_prompt_lower or any(kw in user_prompt_lower for kw in matched_keywords(m_id)):
-                    matched_syllabus = True
-                    syllabus_text = query_syllabus(m_id)
-                    
-                    coaching_encouragement = ""
-                    active_gaps = [s["topic"] for s in state["active_struggles"] if s["status"] == "active"]
-                    if active_gaps:
-                        coaching_encouragement = f"📋 **[Coaching Agent]** I see you have active struggles in: *{', '.join(active_gaps)}*. Don't worry, reviewing this module is the perfect step to build confidence!\n\n"
-                    else:
-                        coaching_encouragement = "📋 **[Coaching Agent]** You are making phenomenal steady progress! Let's conquer this next milestone.\n\n"
-                        
-                    response_text = (
-                        f"{coaching_encouragement}"
-                        f"📘 **[Teaching Agent Lesson]**\n"
-                        f"{syllabus_text}\n\n"
-                        f"Would you like to take a quick quiz on this topic to test your knowledge and unlock your completion badges? Just type **'Quiz me'**!"
-                    )
-                    break
-            
-            if not matched_syllabus:
-                response_text = (
-                    f"📋 **[Coaching Agent]** Hello! I am scanning your learning logs. You've completed **{state['overall_progress_percent']}%** of the L200 path. "
-                    "I am monitoring your conversation to capture study struggles implicitly and update your gaps map.\n\n"
-                    "📘 **[Teaching Agent]** Welcome! I can teach you any of the 6 core modules of the L200 path:\n"
-                    "1. `s1_m1` - Accelerate Development with Antigravity\n"
-                    "2. `s1_m2` - Deploy Agents with ADK\n"
-                    "3. `s1_m3` - Evaluate & Improve Agents (Hill Climbing)\n"
-                    "4. `s2_m1` - Workspace Grounding & Model Armor\n"
-                    "5. `s2_m2` - Gemini Workspace integration\n"
-                    "6. `s2_m3` - Platform Access Governance\n\n"
-                    "Tell me what topic you want to study (e.g. *'Explain Model Armor'*) or say **'Quiz me'** to test yourself!"
-                )
+    if is_quiz_request:
+        intent = "request_quiz"
+    elif any(m_id in user_prompt_lower for m_id in L200_SYLLABUS.keys()):
+        intent = "query_lesson"
 
-    return {
-        "response": response_text,
-        "state": state,
-        "detected_gaps": detected_gaps
-    }
+    span = None
+    if tracer:
+        span = tracer.start_span("orchestrate_agents")
+        if span.is_recording():
+            span.set_attribute("gen_ai.user_id", redact_pii(user_id))
+            span.set_attribute("gen_ai.intent", intent)
+
+    outcome = "unknown_outcome"
+    try:
+        state = db.get_state(user_id)
+        
+        # 1. 📋 Coaching Agent: Implicit Struggle Analysis
+        detected_gaps = []
+        struggle_topics_map = {
+            "antigravity": ("Antigravity CLI (agy)", "medium"),
+            "agy": ("Antigravity CLI (agy)", "medium"),
+            "skill.yaml": ("Declarative skill configs", "high"),
+            "adk": ("ADK Python Class definitions", "high"),
+            "tool": ("ADK Tool registration", "medium"),
+            "hill climbing": ("Hill Climbing prompt optimization", "high"),
+            "evaluation": ("Grading rubrics & validation", "medium"),
+            "model armor": ("Model Armor config", "high"),
+            "grounding": ("Workspace data grounding", "high"),
+            "rbac": ("Access governance & service accounts", "high"),
+            "governance": ("Access governance & service accounts", "high"),
+        }
+        
+        for kw, (struggle_title, severity) in struggle_topics_map.items():
+            if kw in user_prompt_lower:
+                detected_gaps.append(struggle_title)
+                db.log_struggle(struggle_title, severity, user_id)
+                
+        # Refresh state after logging struggles
+        state = db.get_state(user_id)
+
+        # 2. Handle live Gemini API or local intelligent routing
+        if api_key:
+            logger.info("Using Live Gemini API Mode for Agent orchestrator.")
+            system_prompt = (
+                "You are coordinating an L200 Study Companion multi-agent platform consisting of:\n"
+                "- TeachingAgent: Delivers lectures, syllabus overviews, and links.\n"
+                "- CoachingAgent: Inspects struggles and provides motivational correction.\n"
+                "- QuizAgent: Asks mock questions.\n\n"
+                f"Active student struggles: {json.dumps([s['topic'] for s in state['active_struggles'] if s['status']=='active'])}\n"
+                f"Progress state: {state['overall_progress_percent']}% complete. Course Syllabus: {json.dumps(L200_SYLLABUS)}\n\n"
+                "Represent the subagents transparently in your response. Combine their thoughts like this:\n"
+                "📋 **[Coaching Agent Insights]** ...\n"
+                "📘 **[Teaching Agent Lecture]** ...\n"
+                "If the user wants a test/quiz, generate a custom multiple-choice question tailored to their active struggles or current module, labeled under:\n"
+                "📝 **[Quiz Agent Question]** ..."
+            )
+            
+            full_prompt = f"{system_prompt}\n\nStudent Message: {clean_message}\n\nAgent responses:"
+            response_text = _query_gemini_api(full_prompt, api_key)
+            outcome = "gemini_agent_response"
+            
+        else:
+            logger.info("Using Local Intelligent Mode (Rule-based routing).")
+            if is_quiz_request:
+                selected_module = "s1_m1"
+                for m_id in L200_SYLLABUS.keys():
+                    if not state["modules"][m_id]["completed"]:
+                        selected_module = m_id
+                        break
+                
+                content = L200_SYLLABUS[selected_module]
+                q_info = content["quiz_question"]
+                
+                response_text = (
+                    f"📋 **[Coaching Agent]** I noticed you're ready for an assessment on **{content['title']}**! Let's see what you've mastered.\n\n"
+                    f"📝 **[Quiz Agent Question]**\n"
+                    f"**Module: {content['title']}**\n\n"
+                    f"{q_info['question']}\n\n"
+                    f"{chr(10).join(q_info['options'])}\n\n"
+                    f"*Reply with your answer (e.g., 'The answer is B') to test your mastery!*"
+                )
+                outcome = "local_quiz_question_delivered"
+            else:
+                matched_syllabus = False
+                for m_id, content in L200_SYLLABUS.items():
+                    if m_id in user_prompt_lower or any(kw in user_prompt_lower for kw in matched_keywords(m_id)):
+                        matched_syllabus = True
+                        syllabus_text = query_syllabus(m_id)
+                        
+                        coaching_encouragement = ""
+                        active_gaps = [s["topic"] for s in state["active_struggles"] if s["status"] == "active"]
+                        if active_gaps:
+                            coaching_encouragement = f"📋 **[Coaching Agent]** I see you have active struggles in: *{', '.join(active_gaps)}*. Don't worry, reviewing this module is the perfect step to build confidence!\n\n"
+                        else:
+                            coaching_encouragement = "📋 **[Coaching Agent]** You are making phenomenal steady progress! Let's conquer this next milestone.\n\n"
+                            
+                        response_text = (
+                            f"{coaching_encouragement}"
+                            f"📘 **[Teaching Agent Lesson]**\n"
+                            f"{syllabus_text}\n\n"
+                            f"Would you like to take a quick quiz on this topic to test your knowledge and unlock your completion badges? Just type **'Quiz me'**!"
+                        )
+                        outcome = f"local_syllabus_lesson_delivered:{m_id}"
+                        break
+                
+                if not matched_syllabus:
+                    response_text = (
+                        f"📋 **[Coaching Agent]** Hello! I am scanning your learning logs. You've completed **{state['overall_progress_percent']}%** of the L200 path. "
+                        "I am monitoring your conversation to capture study struggles implicitly and update your gaps map.\n\n"
+                        "📘 **[Teaching Agent]** Welcome! I can teach you any of the 6 core modules of the L200 path:\n"
+                        "1. `s1_m1` - Accelerate Development with Antigravity\n"
+                        "2. `s1_m2` - Deploy Agents with ADK\n"
+                        "3. `s1_m3` - Evaluate & Improve Agents (Hill Climbing)\n"
+                        "4. `s2_m1` - Workspace Grounding & Model Armor\n"
+                        "5. `s2_m2` - Gemini Workspace integration\n"
+                        "6. `s2_m3` - Platform Access Governance\n\n"
+                        "Tell me what topic you want to study (e.g. *'Explain Model Armor'*) or say **'Quiz me'** to test yourself!"
+                    )
+                    outcome = "local_general_guidance_delivered"
+
+        # Record success telemetry on the active trace span
+        if span and span.is_recording():
+            span.set_attribute("gen_ai.outcome", outcome)
+            from opentelemetry.trace import StatusCode
+            span.set_status(StatusCode.OK)
+
+        # Emit High-Fidelity Intent-vs-Outcome Structured JSON Log
+        logger.info(
+            f"Successfully processed student session. User: {user_id}. Outcome: {outcome}.",
+            extra={"intent": intent, "outcome": outcome, "user_id": user_id}
+        )
+
+        return {
+            "response": response_text,
+            "state": state,
+            "detected_gaps": detected_gaps
+        }
+
+    except Exception as e:
+        # Record error telemetry on the active trace span
+        outcome = f"failed_with_exception: {str(e)}"
+        if span and span.is_recording():
+            span.record_exception(e)
+            from opentelemetry.trace import StatusCode
+            span.set_status(StatusCode.ERROR, str(e))
+
+        logger.error(
+            f"Failed to orchestrate agents due to exception.",
+            exc_info=True,
+            extra={"intent": intent, "outcome": outcome, "user_id": user_id}
+        )
+        raise e
+
+    finally:
+        if span:
+            span.end()
 
 def matched_keywords(module_id: str) -> list:
     kw_map = {
