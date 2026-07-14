@@ -180,7 +180,7 @@ def query_syllabus(topic_query: str) -> str:
         )
 
     for m_id, content in L200_SYLLABUS.items():
-        if m_id in q or any(t.lower() in q for t in content["topics"]) or content["title"].lower() in q:
+        if m_id in q or any(t.lower() in q or q in t.lower() for t in content["topics"]) or q in content["title"].lower() or content["title"].lower() in q:
             return (
                 f"📖 **Module Found: {content['title']}**\n"
                 f"📝 *Description:* {content['description']}\n"

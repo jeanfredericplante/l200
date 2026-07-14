@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import copy
 from datetime import datetime
 
 # Setup basic logging
@@ -65,11 +66,12 @@ class DBManager:
                 doc_ref = self.firestore_db.collection(FIRESTORE_COLLECTION).document(user_id)
                 doc = doc_ref.get()
                 if doc.exists:
-                    return doc.to_dict()
+                     return doc.to_dict()
                 else:
                     # Write default state to Firestore
-                    doc_ref.set(DEFAULT_STATE)
-                    return DEFAULT_STATE.copy()
+                    default_copy = copy.deepcopy(DEFAULT_STATE)
+                    doc_ref.set(default_copy)
+                    return default_copy
             except Exception as e:
                 logger.error(f"Error reading from Firestore: {e}. Falling back to local file.")
         
@@ -82,8 +84,9 @@ class DBManager:
                 logger.error(f"Error reading local state file: {e}. Returning default state.")
         
         # If no file exists, save and return default state
-        self.save_state(DEFAULT_STATE, user_id)
-        return DEFAULT_STATE.copy()
+        default_copy = copy.deepcopy(DEFAULT_STATE)
+        self.save_state(default_copy, user_id)
+        return default_copy
 
     def save_state(self, state: dict, user_id=DEFAULT_USER_ID):
         """Persists the user state to Firestore or local JSON."""

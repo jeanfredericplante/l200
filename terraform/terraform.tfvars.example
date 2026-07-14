@@ -1,0 +1,23 @@
+# ==========================================
+# 🌌 Terraform Variables Example Configuration
+# ==========================================
+# Rename this file to `terraform.tfvars` and update values accordingly.
+
+# Your GCP Project ID (Required)
+project_id = "your-gcp-project-id"
+
+# Deployment Region (Optional, defaults to us-central1)
+region = "us-central1"
+
+# Service Name (Optional, defaults to l200-study-hub)
+service_name = "l200-study-hub"
+
+# Artifact Registry Repository Name (Optional, defaults to l200-images)
+repository_id = "l200-images"
+
+# Firestore Database Name (Optional, defaults to (default))
+# Note: For most projects, the default database name is "(default)"
+firestore_db_name = "(default)"
+
+# Firestore Database Location (Optional, defaults to nam5)
+firestore_location = "nam5"
