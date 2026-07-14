@@ -1,402 +1,54 @@
 import os
-import re
 import json
-import logging
-
-# ==========================================
-# 🔐 PII Redaction Mechanism
-# ==========================================
-EMAIL_REGEX = re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-PHONE_REGEX = re.compile(r"\b(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\b")
-SSN_REGEX = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-CREDIT_CARD_REGEX = re.compile(r"\b(?:\d[ -]*?){13,16}\b")
-
-def redact_pii(text: str) -> str:
-    """Redacts email addresses, phone numbers, SSNs, and credit cards from text to preserve user privacy."""
-    if not isinstance(text, str):
-        return text
-    text = EMAIL_REGEX.sub("[REDACTED_EMAIL]", text)
-    text = PHONE_REGEX.sub("[REDACTED_PHONE]", text)
-    text = SSN_REGEX.sub("[REDACTED_SSN]", text)
-    text = CREDIT_CARD_REGEX.sub("[REDACTED_CREDIT_CARD]", text)
-    return text
-
-# ==========================================
-# 📊 Structured JSON Logging System
-# ==========================================
-class StructuredJSONFormatter(logging.Formatter):
-    """Custom formatter to output structured JSON logs with PII redaction and active OpenTelemetry tracing context."""
-    def format(self, record):
-        # Base JSON log structure
-        log_record = {
-            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%SZ"),
-            "severity": record.levelname,
-            "logger": record.name,
-            "message": redact_pii(record.getMessage()),
-        }
-        
-        # Exception formatting with safety redact
-        if record.exc_info:
-            log_record["exception"] = redact_pii(self.formatException(record.exc_info))
-            
-        # Intent-vs-Outcome logging fields
-        if hasattr(record, "intent"):
-            log_record["intent"] = redact_pii(record.intent)
-        if hasattr(record, "outcome"):
-            log_record["outcome"] = redact_pii(record.outcome)
-        if hasattr(record, "user_id"):
-            log_record["user_id"] = redact_pii(record.user_id)
-            
-        # Inject active trace context from OpenTelemetry
-        try:
-            from opentelemetry import trace
-            current_span = trace.get_current_span()
-            if current_span and current_span.get_span_context().is_valid:
-                trace_id = current_span.get_span_context().trace_id
-                log_record["trace_id"] = f"{trace_id:x}"
-        except Exception:
-            pass
-            
-        return json.dumps(log_record)
-
-# Configure the active Logger to emit Structured JSON Logs
-logger = logging.getLogger("agent_definition")
-handler = logging.StreamHandler()
-handler.setFormatter(StructuredJSONFormatter())
-logger.handlers.clear()
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
-# Prevent propagation from outputting duplicate standard unformatted logs
-logger.propagate = False
-
-# ==========================================
-# 🌌 OpenTelemetry Setup & Tracer Configuration
-# ==========================================
-# Enable OpenTelemetry semantic conventions for Generative AI
-os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "gen_ai_latest_experimental"
-# Ensure the full message content (prompts & responses) is captured in the trace events
-os.environ["OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"] = "EVENT_ONLY"
-
-tracer = None
-try:
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-
-    # Attempt to initialize tracer provider if not already set up
-    provider = trace.get_tracer_provider()
-    if not hasattr(provider, "add_span_processor"):
-        provider = TracerProvider()
-        try:
-            processor = BatchSpanProcessor(OTLPSpanExporter())
-            provider.add_span_processor(processor)
-        except Exception as e:
-            logger.warning(f"Failed to add OTLPSpanExporter: {str(e)}")
-        trace.set_tracer_provider(provider)
-    
-    tracer = trace.get_tracer("l200_study_companion")
-except Exception as e:
-    logger.warning(f"OpenTelemetry initialization skipped: {str(e)}")
-
 import requests
-import json
 from google.adk import Agent
-from .db_manager import DBManager
 
-db = DBManager()
+# Import modular telemetry, logs, and redaction utilities
+from utils.telemetry import redact_pii, logger, tracer
 
-# ==========================================
-# 📚 L200 Syllabus Knowledge Base
-# ==========================================
-L200_SYLLABUS = {
-    "s1_m1": {
-        "title": "Accelerate Development with Antigravity",
-        "description": "Learn to use agentic workflows to build other agents using Google Antigravity.",
-        "skills_path": "https://partner.skills.google/paths/3476",
-        "challenge_lab": "https://partner.skills.google/course_templates/1568",
-        "topics": [
-            "Antigravity CLI (agy) commands",
-            "Agents-build-agents design paradigms",
-            "Declarative skill configurations (skill.yaml)",
-            "Workspace manifest definitions"
-        ],
-        "quiz_question": {
-            "question": "When building an agent using Google Antigravity, which file is used to define the agent's core identity, metadata, and available tool permissions?",
-            "options": [
-                "A) main.py",
-                "B) skill.yaml",
-                "C) model_armor.json",
-                "D) agent_definition.py"
-            ],
-            "correct_answer": "B",
-            "explanation": "In Antigravity (AGY), `skill.yaml` acts as the declarative manifest defining metadata, intents, and capabilities of the custom agent skill."
-        }
-    },
-    "s1_m2": {
-        "title": "Deploy an Agent with Agent Development Kit (ADK)",
-        "description": "Learn the Python-based Agent Development Kit (ADK) to build, wrap, and deploy custom agent endpoints.",
-        "skills_path": "https://partner.skills.google/paths/4144",
-        "challenge_lab": "https://partner.skills.google/course_templates/1435",
-        "topics": [
-            "Google ADK class syntax (Agent, Tool)",
-            "FastAPI routing of agent prompts",
-            "Registering Custom Python functions as tools",
-            "CORS and REST API packaging for Agent Runner"
-        ],
-        "quiz_question": {
-            "question": "In the Google Agent Development Kit (ADK), how do you register a custom Python function to be called by an ADK Agent?",
-            "options": [
-                "A) Decorate the function with @app.route('/tool')",
-                "B) Add the function name to python-dotenv",
-                "C) Wrap the function using the Tool constructor: Tool(name='...', func=my_func, description='...')",
-                "D) Write the function directly inside index.html"
-            ],
-            "correct_answer": "C",
-            "explanation": "ADK registers python routines as tool-calls by wrapping them in the `google.adk.Tool` wrapper, passing the executable function reference as the `func` argument."
-        }
-    },
-    "s1_m3": {
-        "title": "Deploy Evaluate and Improve Agent Development Kit Agents",
-        "description": "Evaluate agent outputs and implement prompt tuning loops using Hill Climbing.",
-        "skills_path": "https://partner.skills.google/paths/4306",
-        "challenge_lab": "https://partner.skills.google/course_templates/1754",
-        "topics": [
-            "Agent performance evaluations",
-            "Defining compliance rubrics & tests",
-            "Hill Climbing optimization loops",
-            "Prompt tuning and iteration automation"
-        ],
-        "quiz_question": {
-            "question": "What is the primary objective of the 'Hill Climbing' search algorithm in the context of ADK agent evaluation and improvement?",
-            "options": [
-                "A) To map optimal server routing paths on GCP",
-                "B) To secure local API credentials using encryption",
-                "C) To iteratively tweak prompt parameters and system instructions to maximize grading rubric compliance",
-                "D) To balance traffic between active container replicas"
-            ],
-            "correct_answer": "C",
-            "explanation": "Hill Climbing is a local search algorithm utilized to optimize agent prompts by iteratively making subtle prompt tweaks, scoring them against rubrics, and adopting the highest-scoring instruction candidate."
-        }
-    },
-    "s2_m1": {
-        "title": "Deploy Gemini Enterprise with Workspace Data & Model Armor",
-        "description": "Ground agents securely on Google Workspace files and implement safety controls using Model Armor.",
-        "skills_path": "https://partner.skills.google/paths/3575",
-        "challenge_lab": "https://partner.skills.google/paths/3575/course_templates/1665",
-        "topics": [
-            "Workspace data source grounding (Drive, Docs, Sheets)",
-            "Configuring Model Armor safety filters",
-            "Mitigating jailbreak prompts",
-            "Sanitizing sensitive data leakages (PII filters)"
-        ],
-        "quiz_question": {
-            "question": "Which Google Cloud platform tool is specifically configured to block user jailbreak attempts, filter toxic content, and sanitize agent outputs in a Gemini Enterprise deployment?",
-            "options": [
-                "A) Cloud Armor",
-                "B) Identity-Aware Proxy (IAP)",
-                "C) Model Armor",
-                "D) Artifact Registry"
-            ],
-            "correct_answer": "C",
-            "explanation": "Model Armor is Google Cloud's safety proxy designed to inspect inputs and outputs of Generative AI systems, applying custom filters for safety, toxic content, and security breaches (jailbreaks)."
-        }
-    },
-    "s2_m2": {
-        "title": "Add Agents to Gemini Enterprise",
-        "description": "Integrate custom agent workloads directly into Google Workspace enterprise apps.",
-        "skills_path": "https://partner.skills.google/paths/3581",
-        "challenge_lab": "https://partner.skills.google/paths/3581/course_templates/1632",
-        "topics": [
-            "Gemini in Gmail/Docs side panels",
-            "Enterprise extension integrations",
-            "OAuth scopes configuration for Workspace",
-            "Synchronizing corporate knowledge catalogs"
-        ],
-        "quiz_question": {
-            "question": "When connecting an ADK agent to a Workspace enterprise deployment for grounding, what is the best practice to protect confidential company files?",
-            "options": [
-                "A) Copying files into a public Github repository",
-                "B) Configuring fine-grained data source credentials and respecting existing enterprise access control list (ACL) rules",
-                "C) Disabling all safety filters to maximize token speed",
-                "D) Embedding the secret API key in client-side app.js"
-            ],
-            "correct_answer": "B",
-            "explanation": "Workspace grounding requires integrating securely with enterprise Access Control Lists (ACLs) so that agents can only retrieve files the current active user is authorized to read."
-        }
-    },
-    "s2_m3": {
-        "title": "Govern Agent Access with Gemini Enterprise Agent Platform",
-        "description": "Govern, secure, and scale the corporate agent ecosystem using security best practices.",
-        "skills_path": "https://partner.skills.google/paths/3810",
-        "challenge_lab": "https://partner.skills.google/course_templates/1749",
-        "topics": [
-            "Gemini Enterprise Access Governance policies",
-            "Role-Based Access Control (RBAC) configurations",
-            "Auditing agent API usage and transaction logs",
-            "Managing secret API tokens securely in Secret Manager"
-        ],
-        "quiz_question": {
-            "question": "What is the recommended approach for governing custom agent capabilities and authorization scopes across an enterprise organization?",
-            "options": [
-                "A) Providing the exact same admin credentials to every agent instance",
-                "B) Setting up fine-grained Role-Based Access Control (RBAC) mapping specific agents to narrow, verified service accounts",
-                "C) Running all workloads outside the enterprise network firewall",
-                "D) Storing credentials in plain text comments inside agent_definition.py"
-            ],
-            "correct_answer": "B",
-            "explanation": "Secure governance relies on RBAC (Role-Based Access Control) to assign least-privilege permissions and narrow service accounts to each distinct agent workload on the platform."
-        }
-    }
-}
+# Import modular curriculum syllabus details
+from utils.syllabus import L200_SYLLABUS, query_syllabus
+
+# Import modular subagents and local database manager
+from agents.coaching import coaching_agent
+from agents.teaching import teaching_agent
+from agents.quiz import quiz_agent, update_learning_progress, db
 
 # ==========================================
-# 🛠️ Define ADK Tools (Official ADK Callables)
+# 👑 Unified Multi-Agent Root Orchestrator
 # ==========================================
-from pydantic import BaseModel, Field, ValidationError
-
-class QuerySyllabusSchema(BaseModel):
-    """Schema for validating query_syllabus tool input."""
-    topic_query: str = Field(
-        ...,
-        description="The keyword, module ID (e.g., 's1_m1', 's2_m3'), or specific topic to search for in the L200 curriculum."
-    )
-
-class UpdateLearningProgressSchema(BaseModel):
-    """Schema for validating update_learning_progress tool input."""
-    module_id: str = Field(
-        ...,
-        description="The formal ID of the L200 curriculum module to update. MUST be one of: 's1_m1', 's1_m2', 's1_m3', 's2_m1', 's2_m2', 's2_m3'."
-    )
-
-def query_syllabus(topic_query: str) -> str:
-    """Queries L200 curriculum lessons, critical topics, and learning pathways.
-
-    Args:
-        topic_query: The keyword, module ID, or topic to search for. Must be a valid, non-empty string.
-
-    Returns:
-        A detailed summary of the matching module, or structured error instructions on mismatch.
-    """
-    try:
-        # Validate inputs using Pydantic schema
-        validated = QuerySyllabusSchema(topic_query=topic_query)
-        q = validated.topic_query.lower()
-    except ValidationError as ve:
-        # Structured error handling with guided recovery instructions
-        error_details = ve.errors()
-        return (
-            f"❌ Tool Validation Error: The provided input parameter was invalid.\n"
-            f"Details: {error_details}\n"
-            f"👉 Guided Instructions: Please ensure you pass a valid, non-empty string as the 'topic_query' parameter."
-        )
-
-    for m_id, content in L200_SYLLABUS.items():
-        if m_id in q or any(t.lower() in q for t in content["topics"]) or content["title"].lower() in q:
-            return (
-                f"📖 **Module Found: {content['title']}**\n"
-                f"📝 *Description:* {content['description']}\n"
-                f"🔗 *Official Learning Path:* {content['skills_path']}\n"
-                f"🧪 *Official Challenge Lab:* {content['challenge_lab']}\n"
-                f"📌 *Key Topics Covered:* {', '.join(content['topics'])}"
-            )
-
-    # Guided instructions on failure to find match
-    return (
-        "⚠️ Module not found. I couldn't match your query with any L200 syllabus modules.\n"
-        "👉 Guided Instructions: To get a match, please search using a general concept or a specific module ID. "
-        "Try searching for one of the following exact module IDs:\n"
-        "  - 's1_m1' (Accelerate Development with Antigravity)\n"
-        "  - 's1_m2' (Deploy Agents with ADK)\n"
-        "  - 's1_m3' (Evaluate & Improve Agents / Hill Climbing)\n"
-        "  - 's2_m1' (Workspace Grounding & Model Armor)\n"
-        "  - 's2_m2' (Add Agents to Gemini Workspace)\n"
-        "  - 's2_m3' (Govern Agent Access / Platform Governance)\n"
-        "Or enter keywords like 'Antigravity CLI', 'Model Armor', 'Hill Climbing', etc."
-    )
-
-def update_learning_progress(module_id: str) -> str:
-    """Updates user state database, marking a specific L200 module as successfully studied.
-
-    Args:
-        module_id: The formal ID of the L200 curriculum module to complete (e.g. 's1_m1').
-
-    Returns:
-        A confirmation message of successful state logging or a guided error recovery response.
-    """
-    try:
-        # Validate inputs using Pydantic schema
-        validated = UpdateLearningProgressSchema(module_id=module_id)
-        mod_id = validated.module_id
-    except ValidationError as ve:
-        # Structured validation error handling with guided recovery instructions
-        error_details = ve.errors()
-        return (
-            f"❌ Tool Validation Error: The provided input parameter was invalid.\n"
-            f"Details: {error_details}\n"
-            f"👉 Guided Instructions: Please ensure you provide a valid 'module_id' parameter."
-        )
-
-    if mod_id in L200_SYLLABUS:
-        db.update_module_status(mod_id, completed=True)
-        return f"✅ Progress logged: Module '{L200_SYLLABUS[mod_id]['title']}' marked as COMPLETED! Dashboard metrics updated."
-
-    # Structured guided instructions for invalid module IDs
-    valid_ids_str = ", ".join([f"'{k}'" for k in L200_SYLLABUS.keys()])
-    return (
-        f"⚠️ Error: The module ID '{mod_id}' is invalid.\n"
-        f"👉 Guided Instructions: Please specify one of the following official L200 module IDs: "
-        f"{valid_ids_str}. For example, call this tool with 's1_m1' to complete Module 1."
-    )
-
-
-# ==========================================
-# 🤖 Instantiate ADK Study Agents
-# ==========================================
-teaching_agent = Agent(
-    name="TeachingAgent",
+root_agent = Agent(
+    name="L200StudyOrchestrator",
     model="gemini-2.5-flash",
-    tools=[query_syllabus],
-    instruction="You are the L200 Teaching Agent. Your job is to lecture and explain L200 syllabus topics, provide links, and prepare students for testing. Keep answers clear and supportive."
-)
-
-coaching_agent = Agent(
-    name="CoachingAgent",
-    model="gemini-2.5-flash",
-    tools=[],
-    instruction="You are the L200 Coaching Agent. Your job is to analyze conversations, identify student doubts or struggles, and suggest adjustments. You help them overcome cognitive gaps."
-)
-
-quiz_agent = Agent(
-    name="QuizAgent",
-    model="gemini-2.5-flash",
-    tools=[update_learning_progress],
-    instruction="You are the L200 Quiz Agent. Your job is to evaluate student answers, deliver challenging multiple-choice questions, and log successful attempts to update learning status."
+    instruction=(
+        "You are the L200 Study Companion Orchestrator, coordinating an enterprise-grade education graph consisting of:\n"
+        "- CoachingAgent: Inspects struggles and provides motivational correction.\n"
+        "- TeachingAgent: Delivers syllabus overviews, lectures, and resources.\n"
+        "- QuizAgent: Coordinates assessments and updates user learning progress.\n\n"
+        "Ensure the user gets a supportive and cohesive learning experience."
+    ),
+    sub_agents=[coaching_agent, teaching_agent, quiz_agent]
 )
 
 # ==========================================
-# 🧠 Direct REST-based Gemini Inferences
+# 💻 Direct Gemini API Communication Helper
 # ==========================================
 def _query_gemini_api(prompt: str, api_key: str) -> str:
-    """Invokes the Gemini API via secure, direct REST request with no SDK dependencies."""
+    """Queries Gemini model directly using REST API for local/hybrid development."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 800}
-    }
     headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
     
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            res_json = response.json()
-            return res_json["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            logger.error(f"Gemini API Error {response.status_code}: {response.text}")
-            return f"Error: Received API code {response.status_code}."
-    except Exception as e:
-        logger.error(f"Error connecting to Gemini API: {str(e)}")
-        return "Error connecting to Gemini platform."
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code == 200:
+        try:
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError):
+            raise RuntimeError("Unexpected response structure from Gemini API.")
+    else:
+        raise RuntimeError(f"Gemini API request failed with status {response.status_code}: {response.text}")
 
 # ==========================================
 # 🌊 Combined Multi-Agent Orchestration Loop
@@ -612,19 +264,3 @@ def matched_keywords(module_id: str) -> list:
         "s2_m3": ["govern", "rbac", "security", "access"]
     }
     return kw_map.get(module_id, [])
-
-# Define the Root Orchestrator Agent for Agent Platform / Reasoning Engine deployment
-root_agent = Agent(
-    name="L200StudyOrchestrator",
-    model="gemini-2.5-flash",
-    instruction=(
-        "You are the L200 Study Companion Orchestrator. "
-        "Direct the user's request to one of your specialized subagents:\n"
-        "- CoachingAgent: To analyze and address gaps/struggles\n"
-        "- TeachingAgent: To lecture, explain L200 modules and provide links\n"
-        "- QuizAgent: To run Assessments/Quizzes\n"
-        "Ensure the user gets a supportive and cohesive learning experience."
-    ),
-    sub_agents=[coaching_agent, teaching_agent, quiz_agent]
-)
-
