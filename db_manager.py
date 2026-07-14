@@ -31,19 +31,32 @@ DEFAULT_STATE = {
 
 class DBManager:
     def __init__(self):
-        self.firestore_db = None
-        self._init_firestore()
+        self._firestore_client_cache = None
 
-    def _init_firestore(self):
-        """Attempts to initialize the Firestore client. Falls back silently to local JSON if not configured."""
-        try:
-            # Firestore will automatically initialize if credentials are provided in env or running on GCP
-            from google.cloud import firestore
-            self.firestore_db = firestore.Client()
-            logger.info("🔥 Firestore client successfully initialized.")
-        except Exception as e:
-            logger.warning(f"⚠️ Firestore init skipped (falling back to local storage): {str(e)}")
-            self.firestore_db = None
+    @property
+    def firestore_db(self):
+        """Lazy-loads the Firestore client, preventing pickling issues during deployment."""
+        if not hasattr(self, "_firestore_client_cache") or self._firestore_client_cache is None:
+            try:
+                from google.cloud import firestore
+                self._firestore_client_cache = firestore.Client()
+                logger.info("🔥 Firestore client successfully initialized (lazy).")
+            except Exception as e:
+                logger.warning(f"⚠️ Firestore init skipped (falling back to local storage): {str(e)}")
+                self._firestore_client_cache = None
+        return self._firestore_client_cache
+
+    def __getstate__(self):
+        """Custom serialization to ensure firestore.Client is excluded from pickles."""
+        state = self.__dict__.copy()
+        # Do not pickle the active firestore socket/client cache
+        state["_firestore_client_cache"] = None
+        return state
+
+    def __setstate__(self, state):
+        """Custom deserialization to restore DBManager state."""
+        self.__dict__.update(state)
+
 
     def get_state(self, user_id=DEFAULT_USER_ID) -> dict:
         """Retrieves user state from Firestore or local JSON."""

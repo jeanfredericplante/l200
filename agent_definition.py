@@ -3,7 +3,7 @@ import requests
 import json
 import logging
 from google.adk import Agent
-from db_manager import DBManager
+from .db_manager import DBManager
 
 logger = logging.getLogger("agent_definition")
 db = DBManager()
@@ -155,9 +155,44 @@ L200_SYLLABUS = {
 # ==========================================
 # 🛠️ Define ADK Tools (Official ADK Callables)
 # ==========================================
+from pydantic import BaseModel, Field, ValidationError
+
+class QuerySyllabusSchema(BaseModel):
+    """Schema for validating query_syllabus tool input."""
+    topic_query: str = Field(
+        ...,
+        description="The keyword, module ID (e.g., 's1_m1', 's2_m3'), or specific topic to search for in the L200 curriculum."
+    )
+
+class UpdateLearningProgressSchema(BaseModel):
+    """Schema for validating update_learning_progress tool input."""
+    module_id: str = Field(
+        ...,
+        description="The formal ID of the L200 curriculum module to update. MUST be one of: 's1_m1', 's1_m2', 's1_m3', 's2_m1', 's2_m2', 's2_m3'."
+    )
+
 def query_syllabus(topic_query: str) -> str:
-    """Queries L200 curriculum lessons, critical topics, and instructions."""
-    q = topic_query.lower()
+    """Queries L200 curriculum lessons, critical topics, and learning pathways.
+
+    Args:
+        topic_query: The keyword, module ID, or topic to search for. Must be a valid, non-empty string.
+
+    Returns:
+        A detailed summary of the matching module, or structured error instructions on mismatch.
+    """
+    try:
+        # Validate inputs using Pydantic schema
+        validated = QuerySyllabusSchema(topic_query=topic_query)
+        q = validated.topic_query.lower()
+    except ValidationError as ve:
+        # Structured error handling with guided recovery instructions
+        error_details = ve.errors()
+        return (
+            f"❌ Tool Validation Error: The provided input parameter was invalid.\n"
+            f"Details: {error_details}\n"
+            f"👉 Guided Instructions: Please ensure you pass a valid, non-empty string as the 'topic_query' parameter."
+        )
+
     for m_id, content in L200_SYLLABUS.items():
         if m_id in q or any(t.lower() in q for t in content["topics"]) or content["title"].lower() in q:
             return (
@@ -167,14 +202,55 @@ def query_syllabus(topic_query: str) -> str:
                 f"🧪 *Official Challenge Lab:* {content['challenge_lab']}\n"
                 f"📌 *Key Topics Covered:* {', '.join(content['topics'])}"
             )
-    return "Could not find a specific syllabus match. Ask me about Antigravity CLI, ADK Tool classes, Hill Climbing, Model Armor, Grounding, or Access Governance!"
+
+    # Guided instructions on failure to find match
+    return (
+        "⚠️ Module not found. I couldn't match your query with any L200 syllabus modules.\n"
+        "👉 Guided Instructions: To get a match, please search using a general concept or a specific module ID. "
+        "Try searching for one of the following exact module IDs:\n"
+        "  - 's1_m1' (Accelerate Development with Antigravity)\n"
+        "  - 's1_m2' (Deploy Agents with ADK)\n"
+        "  - 's1_m3' (Evaluate & Improve Agents / Hill Climbing)\n"
+        "  - 's2_m1' (Workspace Grounding & Model Armor)\n"
+        "  - 's2_m2' (Add Agents to Gemini Workspace)\n"
+        "  - 's2_m3' (Govern Agent Access / Platform Governance)\n"
+        "Or enter keywords like 'Antigravity CLI', 'Model Armor', 'Hill Climbing', etc."
+    )
 
 def update_learning_progress(module_id: str) -> str:
-    """Updates user state db marking a specific L200 module as studied."""
-    if module_id in L200_SYLLABUS:
-        db.update_module_status(module_id, completed=True)
-        return f"✅ Progress logged: Module '{L200_SYLLABUS[module_id]['title']}' marked as COMPLETED! Dashboard metrics updated."
-    return f"Module ID '{module_id}' not found."
+    """Updates user state database, marking a specific L200 module as successfully studied.
+
+    Args:
+        module_id: The formal ID of the L200 curriculum module to complete (e.g. 's1_m1').
+
+    Returns:
+        A confirmation message of successful state logging or a guided error recovery response.
+    """
+    try:
+        # Validate inputs using Pydantic schema
+        validated = UpdateLearningProgressSchema(module_id=module_id)
+        mod_id = validated.module_id
+    except ValidationError as ve:
+        # Structured validation error handling with guided recovery instructions
+        error_details = ve.errors()
+        return (
+            f"❌ Tool Validation Error: The provided input parameter was invalid.\n"
+            f"Details: {error_details}\n"
+            f"👉 Guided Instructions: Please ensure you provide a valid 'module_id' parameter."
+        )
+
+    if mod_id in L200_SYLLABUS:
+        db.update_module_status(mod_id, completed=True)
+        return f"✅ Progress logged: Module '{L200_SYLLABUS[mod_id]['title']}' marked as COMPLETED! Dashboard metrics updated."
+
+    # Structured guided instructions for invalid module IDs
+    valid_ids_str = ", ".join([f"'{k}'" for k in L200_SYLLABUS.keys()])
+    return (
+        f"⚠️ Error: The module ID '{mod_id}' is invalid.\n"
+        f"👉 Guided Instructions: Please specify one of the following official L200 module IDs: "
+        f"{valid_ids_str}. For example, call this tool with 's1_m1' to complete Module 1."
+    )
+
 
 # ==========================================
 # 🤖 Instantiate ADK Study Agents
@@ -355,3 +431,19 @@ def matched_keywords(module_id: str) -> list:
         "s2_m3": ["govern", "rbac", "security", "access"]
     }
     return kw_map.get(module_id, [])
+
+# Define the Root Orchestrator Agent for Agent Platform / Reasoning Engine deployment
+root_agent = Agent(
+    name="L200StudyOrchestrator",
+    model="gemini-2.5-flash",
+    instruction=(
+        "You are the L200 Study Companion Orchestrator. "
+        "Direct the user's request to one of your specialized subagents:\n"
+        "- CoachingAgent: To analyze and address gaps/struggles\n"
+        "- TeachingAgent: To lecture, explain L200 modules and provide links\n"
+        "- QuizAgent: To run Assessments/Quizzes\n"
+        "Ensure the user gets a supportive and cohesive learning experience."
+    ),
+    sub_agents=[coaching_agent, teaching_agent, quiz_agent]
+)
+
