@@ -1,0 +1,84 @@
+{
+  "eval_set_id": "l200_study_hub_evalset",
+  "name": "L200 Study Hub Integration Flow",
+  "description": "High-fidelity EvalSet to verify core pedagogical navigation, tool-use, and struggle coaching",
+  "eval_cases": [
+    {
+      "eval_id": "syllabus_exploration_case",
+      "conversation": [
+        {
+          "invocation_id": "turn-001",
+          "user_content": {
+            "parts": [
+              {
+                "text": "I want to start the first module of Study Guide 1"
+              }
+            ],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "Sure! Study Guide 1 Module 1 is 'Accelerate Development with Antigravity'. This module is designed to teach you how to write declarative skills and build with the ADK. Let's start with a overview of the Antigravity CLI and key features."
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "query_syllabus",
+                "args": {
+                  "module_id": "s1_m1"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "l200_study_orchestrator",
+        "user_id": "test_student_01"
+      }
+    },
+    {
+      "eval_id": "quiz_progress_case",
+      "conversation": [
+        {
+          "invocation_id": "turn-002",
+          "user_content": {
+            "parts": [
+              {
+                "text": "I just scored a 95.0% on my s1_m1 quiz. Please log my progress!"
+              }
+            ],
+            "role": "user"
+          },
+          "final_response": {
+            "parts": [
+              {
+                "text": "Outstanding job! Your quiz score of 95.0% has been recorded. You have successfully completed Module 1 of Study Guide 1 ('Accelerate Development with Antigravity')!"
+              }
+            ],
+            "role": "model"
+          },
+          "intermediate_data": {
+            "tool_uses": [
+              {
+                "name": "update_learning_progress",
+                "args": {
+                  "module_id": "s1_m1",
+                  "score_percent": 95.0
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "session_input": {
+        "app_name": "l200_study_orchestrator",
+        "user_id": "test_student_02"
+      }
+    }
+  ]
+}

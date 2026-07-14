@@ -111,3 +111,43 @@ def test_struggle_capturing_evaluation(db_mgr):
             f"Struggle not captured for input: '{message}'. "
             f"Expected topic '{expected_topic}' not in active struggles {active_struggles}"
         )
+
+
+def test_adk_evalset_and_judge_config():
+    """
+    Evaluation Test: Verifies that the ADK EvalSet and LLM-as-Judge criteria configuration
+    files exist, conform to the official ADK Pydantic schemas, and are ready for CI/CD execution.
+    """
+    import os
+    import json
+    import pytest
+    from google.adk.evaluation.eval_set import EvalSet
+
+    # Define paths
+    evalset_path = "tests/evaluation/l200_study.evalset.json"
+    config_path = "tests/evaluation/test_config.json"
+
+    # Assert files exist
+    assert os.path.exists(evalset_path), f"EvalSet file {evalset_path} does not exist."
+    assert os.path.exists(config_path), f"Test configuration file {config_path} does not exist."
+
+    # Validate EvalSet structure using ADK Pydantic validation
+    with open(evalset_path, "r") as f:
+        evalset_data = json.load(f)
+    try:
+        evalset = EvalSet.model_validate(evalset_data)
+    except Exception as e:
+        pytest.fail(f"EvalSet failed Pydantic schema validation: {e}")
+
+    assert evalset.eval_set_id == "l200_study_hub_evalset"
+    assert len(evalset.eval_cases) >= 2
+
+    # Validate test_config criteria structure
+    with open(config_path, "r") as f:
+        config_data = json.load(f)
+
+    assert "criteria" in config_data, "test_config.json must define 'criteria'."
+    criteria = config_data["criteria"]
+    assert "tool_trajectory_avg_score" in criteria, "Missing 'tool_trajectory_avg_score' metric."
+    assert "final_response_match_v2" in criteria, "Missing LLM-as-Judge 'final_response_match_v2' metric."
+    assert "rubric_based_final_response_quality_v1" in criteria, "Missing LLM-as-Judge 'rubric_based_final_response_quality_v1' rubric metric."
