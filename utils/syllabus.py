@@ -154,6 +154,13 @@ class QuerySyllabusSchema(BaseModel):
         description="The keyword, module ID (e.g., 's1_m1', 's2_m3'), or specific topic to search for in the L200 curriculum."
     )
 
+from utils.vector_store import LocalVectorStore
+
+SyllabusVectorStore = LocalVectorStore()
+for m_id, content in L200_SYLLABUS.items():
+    text_to_index = f"{content['title']} {content['description']} {' '.join(content['topics'])}"
+    SyllabusVectorStore.add_document(m_id, text_to_index, metadata=content)
+
 # ==========================================
 # 🛠️ Tools
 # ==========================================
@@ -169,7 +176,7 @@ def query_syllabus(topic_query: str) -> str:
     try:
         # Validate inputs using Pydantic schema
         validated = QuerySyllabusSchema(topic_query=topic_query)
-        q = validated.topic_query.lower()
+        q = validated.topic_query.strip()
     except ValidationError as ve:
         # Structured error handling with guided recovery instructions
         error_details = ve.errors()
@@ -179,10 +186,26 @@ def query_syllabus(topic_query: str) -> str:
             f"👉 Guided Instructions: Please ensure you pass a valid, non-empty string as the 'topic_query' parameter."
         )
 
-    for m_id, content in L200_SYLLABUS.items():
-        if m_id in q or any(t.lower() in q or q in t.lower() for t in content["topics"]) or q in content["title"].lower() or content["title"].lower() in q:
+    # 1. Direct/Fallback Module ID check (e.g. s1_m1)
+    m_id_clean = q.lower()
+    if m_id_clean in L200_SYLLABUS:
+        content = L200_SYLLABUS[m_id_clean]
+        return (
+            f"📖 **Module Found: {content['title']}**\n"
+            f"📝 *Description:* {content['description']}\n"
+            f"🔗 *Official Learning Path:* {content['skills_path']}\n"
+            f"🧪 *Official Challenge Lab:* {content['challenge_lab']}\n"
+            f"📌 *Key Topics Covered:* {', '.join(content['topics'])}"
+        )
+
+    # 2. Semantic Vector search matching
+    results = SyllabusVectorStore.similarity_search(q, top_k=1)
+    if results:
+        best_match = results[0]
+        if best_match["score"] > 0.15:
+            content = best_match["metadata"]
             return (
-                f"📖 **Module Found: {content['title']}**\n"
+                f"📖 **Module Found (Semantic Similarity: {best_match['score']}): {content['title']}**\n"
                 f"📝 *Description:* {content['description']}\n"
                 f"🔗 *Official Learning Path:* {content['skills_path']}\n"
                 f"🧪 *Official Challenge Lab:* {content['challenge_lab']}\n"

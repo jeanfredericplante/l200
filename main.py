@@ -81,29 +81,31 @@ def get_gemini_api_key(req_key: str = "") -> str:
     return fetch_secret_from_manager("gemini-api-key")
 
 
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+
 # API Routes
 @app.get("/api/state")
-def get_state_endpoint():
-    """Fetches current student learning metrics, active struggles, and quiz histories."""
+async def get_state_endpoint():
+    """Fetches current student learning metrics, active struggles, and quiz histories asynchronously."""
     try:
-        return db.get_state()
+        return await db.get_state_async()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/state/update_module")
-def update_module_endpoint(req: ModuleUpdateRequest):
-    """Manually toggles completion of a specific L200 module from the Learning Map."""
+async def update_module_endpoint(req: ModuleUpdateRequest):
+    """Manually toggles completion of a specific L200 module from the Learning Map asynchronously."""
     if req.module_id not in L200_SYLLABUS:
          raise HTTPException(status_code=400, detail="Invalid module ID.")
     try:
-        updated_state = db.update_module_status(req.module_id, req.completed)
+        updated_state = await db.update_module_status_async(req.module_id, req.completed)
         return updated_state
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/chat")
-def chat_endpoint(req: ChatRequest):
-    """Processes user prompts through the multi-agent Orchestrator, logging struggles implicitly."""
+async def chat_endpoint(req: ChatRequest, background_tasks: BackgroundTasks):
+    """Processes user prompts through the multi-agent Orchestrator asynchronously, logging struggles implicitly."""
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="Prompt is empty.")
     
@@ -111,14 +113,15 @@ def chat_endpoint(req: ChatRequest):
     api_key = get_gemini_api_key(req.api_key)
     
     try:
-        result = orchestrate_agents(req.message, api_key=api_key)
+        from agent_definition import orchestrate_agents_async
+        result = await orchestrate_agents_async(req.message, api_key=api_key)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error in multi-agent routing: {str(e)}")
 
 @app.post("/api/quiz/submit")
-def submit_quiz_endpoint(req: QuizSubmitRequest):
-    """Validates student answer against syllabus, logs progress automatically on pass, and returns results."""
+async def submit_quiz_endpoint(req: QuizSubmitRequest):
+    """Validates student answer against syllabus, logs progress automatically on pass, and returns results asynchronously."""
     if req.module_id not in L200_SYLLABUS:
         raise HTTPException(status_code=400, detail="Invalid module ID.")
     
@@ -127,7 +130,7 @@ def submit_quiz_endpoint(req: QuizSubmitRequest):
     
     try:
         score = 100.0 if correct else 0.0
-        updated_state = db.add_quiz_result(req.module_id, score)
+        updated_state = await db.add_quiz_result_async(req.module_id, score)
         
         return {
             "correct": correct,

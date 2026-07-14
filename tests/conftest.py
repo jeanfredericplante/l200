@@ -19,8 +19,9 @@ def clean_test_env(monkeypatch):
     # Force state file to be the test state file
     monkeypatch.setattr(db_manager, "STATE_FILE", "test_l200_state.json")
     
-    # Mock Firestore db to ensure tests run in local-only fallback mode
+    # Mock both sync and async Firestore db properties to ensure tests run in local-only fallback mode
     monkeypatch.setattr(DBManager, "firestore_db", None)
+    monkeypatch.setattr(DBManager, "firestore_db_async", None)
     
     # Remove test file if it exists from previous run
     if os.path.exists("test_l200_state.json"):
@@ -50,5 +51,6 @@ def client(monkeypatch):
     """Provides a FastAPI test client with mocked DBManager."""
     # Ensure main's db uses local test state file
     monkeypatch.setattr(main.db, "_firestore_client_cache", None)
+    monkeypatch.setattr(main.db, "_firestore_async_client_cache", None)
     # Return TestClient
     return TestClient(app)

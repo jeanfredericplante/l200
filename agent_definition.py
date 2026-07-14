@@ -77,8 +77,30 @@ root_agent = Agent(
 )
 
 # ==========================================
-# 💻 Direct Gemini API Communication Helper
+# 💻 Direct Gemini API Communication Helper (Async & Sync)
 # ==========================================
+import asyncio
+import httpx
+
+async def _query_gemini_api_async(prompt: str, api_key: str) -> str:
+    """Queries Gemini model asynchronously using REST API and httpx."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json=payload, timeout=30.0)
+        if response.status_code == 200:
+            try:
+                return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError):
+                raise RuntimeError("Unexpected response structure from Gemini API.")
+        else:
+            raise RuntimeError(f"Gemini API async request failed with status {response.status_code}: {response.text}")
+
+
 def _query_gemini_api(prompt: str, api_key: str) -> str:
     """Queries Gemini model directly using REST API for local/hybrid development."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
@@ -96,26 +118,30 @@ def _query_gemini_api(prompt: str, api_key: str) -> str:
     else:
         raise RuntimeError(f"Gemini API request failed with status {response.status_code}: {response.text}")
 
+
 # ==========================================
-# 🌊 Combined Multi-Agent Orchestration Loop
+# 🌊 Combined Multi-Agent Orchestration Loop (Async Core & Sync Wrapper)
 # ==========================================
-def orchestrate_agents(user_message: str, user_id="default_student", api_key="") -> dict:
+async def orchestrate_agents_async(user_message: str, user_id="default_student", api_key="") -> dict:
     """
-    Coordinates Coaching, Teaching, and Quiz subagents.
-    Analyzes inputs for struggle keywords to log implicit memories.
-    Uses Direct Gemini API if a key is provided; falls back to an intelligent local engine.
+    Coordinates Coaching, Teaching, and Quiz subagents asynchronously.
+    Analyzes inputs for struggle keywords to log implicit memories in Firestore.
+    Processes user prompts while managing chat history and context.
     """
-    # Redact PII from user inputs to protect user privacy
+    # Redact PII from user inputs
     clean_message = redact_pii(user_message)
     user_prompt_lower = clean_message.lower()
 
-    # Determine user intent using a dynamic, high-fidelity LLM-based classifier when an API Key is available
+    # Context & Memory: Add user's message to chat history asynchronously
+    await db.add_chat_message_async("user", clean_message, user_id)
+
+    # Determine user intent asynchronously using a dynamic, high-fidelity LLM-based classifier
     intent = "chat_and_orchestrate"
     is_quiz_request = False
     
     if api_key:
         try:
-            logger.info("Classifying student intent dynamically using Gemini LLM...")
+            logger.info("Classifying student intent dynamically using Gemini LLM (async)...")
             classification_prompt = (
                 "You are an expert user-intent classifier for an L200 Study Companion platform.\n"
                 "Classify the following student query into exactly one of these categories:\n"
@@ -125,7 +151,8 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
                 f"Student Query: '{clean_message}'\n\n"
                 "Return ONLY the exact category name as a single string, with no additional text or formatting."
             )
-            llm_category = _query_gemini_api(classification_prompt, api_key).strip().lower()
+            llm_category = await _query_gemini_api_async(classification_prompt, api_key)
+            llm_category = llm_category.strip().lower()
             if "request_quiz" in llm_category:
                 intent = "request_quiz"
                 is_quiz_request = True
@@ -141,7 +168,6 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
             elif any(m_id in user_prompt_lower for m_id in L200_SYLLABUS.keys()):
                 intent = "query_lesson"
     else:
-        # Brittle regex-matching is used only as a local, API-key-free fallback for off-grid prototyping
         is_quiz_request = any(word in user_prompt_lower for word in ["quiz", "test me", "exam", "question", "test"])
         if is_quiz_request:
             intent = "request_quiz"
@@ -150,14 +176,15 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
 
     span = None
     if tracer:
-        span = tracer.start_span("orchestrate_agents")
+        span = tracer.start_span("orchestrate_agents_async")
         if span.is_recording():
             span.set_attribute("gen_ai.user_id", redact_pii(user_id))
             span.set_attribute("gen_ai.intent", intent)
 
     outcome = "unknown_outcome"
     try:
-        state = db.get_state(user_id)
+        # Load user state asynchronously from Firestore
+        state = await db.get_state_async(user_id)
         
         # 1. 📋 Coaching Agent: Implicit Struggle Analysis
         detected_gaps = []
@@ -178,12 +205,19 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
         for kw, (struggle_title, severity) in struggle_topics_map.items():
             if kw in user_prompt_lower:
                 detected_gaps.append(struggle_title)
-                db.log_struggle(struggle_title, severity, user_id)
+                await db.log_struggle_async(struggle_title, severity, user_id)
                 
-        # Refresh state after logging struggles
-        state = db.get_state(user_id)
+        # Refresh state after logging struggles asynchronously
+        state = await db.get_state_async(user_id)
 
-        # 2. Handle live Gemini API or local intelligent routing
+        # 2. Conversational History Retrieval: Load chat history from Firestore
+        chat_history_formatted = ""
+        if "chat_history" in state and state["chat_history"]:
+            # Retrieve last 6 messages to prevent context bloat while preserving conversation flow
+            recent_msgs = state["chat_history"][-6:]
+            chat_history_formatted = "\n".join([f"- {m['role'].capitalize()}: {m['text']}" for m in recent_msgs])
+
+        # 3. Handle live Gemini API or local intelligent routing
         if api_key:
             logger.info("Using Live Gemini API Mode for Agent orchestrator.")
             system_prompt = (
@@ -200,8 +234,15 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
                 "📝 **[Quiz Agent Question]** ..."
             )
             
-            full_prompt = f"{system_prompt}\n\nStudent Message: {clean_message}\n\nAgent responses:"
-            response_text = _query_gemini_api(full_prompt, api_key)
+            full_prompt = (
+                f"{system_prompt}\n\n"
+                f"--- RETRIEVED CONVERSATION HISTORY ---\n"
+                f"{chat_history_formatted if chat_history_formatted else 'No previous conversation history.'}\n"
+                f"--------------------------------------\n\n"
+                f"Student Message: {clean_message}\n\n"
+                f"Agent responses:"
+            )
+            response_text = await _query_gemini_api_async(full_prompt, api_key)
             outcome = "gemini_agent_response"
             
         else:
@@ -263,6 +304,9 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
                     )
                     outcome = "local_general_guidance_delivered"
 
+        # Context & Memory: Add agent's response to conversation history asynchronously
+        await db.add_chat_message_async("model", response_text, user_id)
+
         # Record success telemetry on the active trace span
         if span and span.is_recording():
             span.set_attribute("gen_ai.outcome", outcome)
@@ -299,6 +343,23 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
     finally:
         if span:
             span.end()
+
+
+def orchestrate_agents(user_message: str, user_id="default_student", api_key="") -> dict:
+    """Synchronous legacy wrapper for orchestrate_agents running under an event loop."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    if loop.is_running():
+        # Fallback if loop is already running in current thread (e.g., in a server context)
+        import nest_asyncio
+        nest_asyncio.apply()
+        return loop.run_until_complete(orchestrate_agents_async(user_message, user_id, api_key))
+    return loop.run_until_complete(orchestrate_agents_async(user_message, user_id, api_key))
+
 
 def matched_keywords(module_id: str) -> list:
     kw_map = {
