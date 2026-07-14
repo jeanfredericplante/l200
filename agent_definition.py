@@ -411,13 +411,44 @@ def orchestrate_agents(user_message: str, user_id="default_student", api_key="")
     clean_message = redact_pii(user_message)
     user_prompt_lower = clean_message.lower()
 
-    # Determine user intent
+    # Determine user intent using a dynamic, high-fidelity LLM-based classifier when an API Key is available
     intent = "chat_and_orchestrate"
-    is_quiz_request = any(word in user_prompt_lower for word in ["quiz", "test me", "exam", "question", "test"])
-    if is_quiz_request:
-        intent = "request_quiz"
-    elif any(m_id in user_prompt_lower for m_id in L200_SYLLABUS.keys()):
-        intent = "query_lesson"
+    is_quiz_request = False
+    
+    if api_key:
+        try:
+            logger.info("Classifying student intent dynamically using Gemini LLM...")
+            classification_prompt = (
+                "You are an expert user-intent classifier for an L200 Study Companion platform.\n"
+                "Classify the following student query into exactly one of these categories:\n"
+                "- 'request_quiz': If the user wants to take a test, quiz, exam, or practice questions.\n"
+                "- 'query_lesson': If the user is asking about a specific syllabus module, topic, or lesson (e.g., s1_m1, Model Armor, ADK).\n"
+                "- 'chat_and_orchestrate': For general greetings, motivation, and general study support.\n\n"
+                f"Student Query: '{clean_message}'\n\n"
+                "Return ONLY the exact category name as a single string, with no additional text or formatting."
+            )
+            llm_category = _query_gemini_api(classification_prompt, api_key).strip().lower()
+            if "request_quiz" in llm_category:
+                intent = "request_quiz"
+                is_quiz_request = True
+            elif "query_lesson" in llm_category:
+                intent = "query_lesson"
+            else:
+                intent = "chat_and_orchestrate"
+        except Exception as e:
+            logger.warning(f"Fallback to regex classification due to LLM classifier error: {str(e)}")
+            is_quiz_request = any(word in user_prompt_lower for word in ["quiz", "test me", "exam", "question", "test"])
+            if is_quiz_request:
+                intent = "request_quiz"
+            elif any(m_id in user_prompt_lower for m_id in L200_SYLLABUS.keys()):
+                intent = "query_lesson"
+    else:
+        # Brittle regex-matching is used only as a local, API-key-free fallback for off-grid prototyping
+        is_quiz_request = any(word in user_prompt_lower for word in ["quiz", "test me", "exam", "question", "test"])
+        if is_quiz_request:
+            intent = "request_quiz"
+        elif any(m_id in user_prompt_lower for m_id in L200_SYLLABUS.keys()):
+            intent = "query_lesson"
 
     span = None
     if tracer:
