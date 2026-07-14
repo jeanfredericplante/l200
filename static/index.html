@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🌌 Gemini L200 Agentic Study Hub</title>
+    <meta name="description" content="An interactive multi-agent study advisor and visual progress tracker for Google Cloud's Gemini Enterprise L200 certification path.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- ==========================================
+             🌌 Sidebar Controls & Navigation
+             ========================================== -->
+        <aside class="sidebar">
+            <div class="brand">
+                <span class="brand-icon">🌌</span>
+                <h1>GEAP L200</h1>
+                <p class="subtitle">Agentic Study Hub</p>
+            </div>
+
+            <!-- Learning Metrics Card -->
+            <div class="metric-card">
+                <h3>Overall Progress</h3>
+                <div class="progress-ring-container">
+                    <svg class="progress-ring" width="120" height="120">
+                        <circle class="progress-ring__circle-bg" stroke="#1d243a" stroke-width="8" fill="transparent" r="50" cx="60" cy="60" />
+                        <circle id="progressCircle" class="progress-ring__circle" stroke="url(#gradient)" stroke-width="8" fill="transparent" r="50" cx="60" cy="60" />
+                        <!-- Define gradient for stroke -->
+                        <defs>
+                            <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" stop-color="#00f2fe" />
+                                <stop offset="100%" stop-color="#4facfe" />
+                            </linearGradient>
+                        </defs>
+                    </svg>
+                    <div id="progressText" class="progress-value">0%</div>
+                </div>
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <span class="stat-label">Hours Done</span>
+                        <span id="hoursCompleted" class="stat-number">0.0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Total Hours</span>
+                        <span id="hoursTotal" class="stat-number">69.25</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Configuration -->
+            <div class="config-section">
+                <h3>🔑 Gemini API Session</h3>
+                <p class="config-desc">Paste your Gemini API key to activate live multi-agent reasoning. Otherwise, the local simulator handles the logic.</p>
+                <div class="input-group">
+                    <input type="password" id="apiKeyInput" placeholder="AIzaSy..." autocomplete="off">
+                    <button id="saveKeyBtn" class="btn btn-primary">Save Session</button>
+                </div>
+                <div id="apiStatus" class="api-status status-offline">
+                    <span class="status-indicator"></span>
+                    <span class="status-label">Local Intelligent Mode</span>
+                </div>
+            </div>
+
+            <!-- Navigation Links -->
+            <nav class="sidebar-nav">
+                <h3>🔗 Official Resources</h3>
+                <a href="https://googleacademy.exceedlms.com/student/catalog" target="_blank" class="nav-link">⭐ Starfleet Academy Home</a>
+                <a href="https://googleacademy.exceedlms.com/student/my_learning" target="_blank" class="nav-link">📖 My Learning Portal</a>
+            </nav>
+        </aside>
+
+        <!-- ==========================================
+             💻 Central Workstation View
+             ========================================== -->
+        <main class="main-content">
+            
+            <!-- Learning Map (Left Pane) -->
+            <section class="learning-map">
+                <div class="pane-header">
+                    <h2>🎯 Learning Roadmap & Completion Checkpoints</h2>
+                    <p>Track modules completed by passing quizzes, or manually check them off as you study.</p>
+                </div>
+
+                <div class="syllabus-timeline">
+                    <!-- SECTION 1 -->
+                    <div class="timeline-section-header">Section 1: Gemini Enterprise Agent Development</div>
+                    
+                    <div class="module-card" id="card_s1_m1">
+                        <div class="card-status">
+                            <input type="checkbox" id="chk_s1_m1" class="module-checkbox">
+                            <span class="badge badge-s1">M1</span>
+                        </div>
+                        <div class="card-body">
+                            <h4>Accelerate Development with Antigravity</h4>
+                            <p>Build custom agent skills declaratively and orchestrate via Antigravity CLI.</p>
+                            <div class="card-links">
+                                <a href="https://partner.skills.google/paths/3476" target="_blank" class="link-btn">📘 Skill Path (~6.75h)</a>
+                                <a href="https://partner.skills.google/course_templates/1568" target="_blank" class="link-btn">🧪 Challenge Lab (~1.75h)</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="module-card" id="card_s1_m2">
+                        <div class="card-status">
+                            <input type="checkbox" id="chk_s1_m2" class="module-checkbox">
+                            <span class="badge badge-s1">M2</span>
+                        </div>
+                        <div class="card-body">
+                            <h4>Deploy an Agent with ADK</h4>
+                            <p>Master Python ADK class constructs, API routing, and custom tools registration.</p>
+                            <div class="card-links">
+                                <a href="https://partner.skills.google/paths/4144" target="_blank" class="link-btn">📘 Skill Path (~10.75h)</a>
+                                <a href="https://partner.skills.google/course_templates/1435" target="_blank" class="link-btn">🧪 Challenge Lab (~1.5h)</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="module-card" id="card_s1_m3">
+                        <div class="card-status">
+                            <input type="checkbox" id="chk_s1_m3" class="module-checkbox">
+                            <span class="badge badge-s1">M3</span>
+                        </div>
+                        <div class="card-body">
+                            <h4>Deploy, Evaluate and Improve Agents</h4>
+                            <p>Tweak prompts programmatically and automate compliance using Hill Climbing.</p>
+                            <div class="card-links">
+                                <a href="https://partner.skills.google/paths/4306" target="_blank" class="link-btn">📘 Skill Path (~10h)</a>
+                                <a href="https://partner.skills.google/course_templates/1754" target="_blank" class="link-btn">🧪 Challenge Lab (~1.5h)</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECTION 2 -->
+                    <div class="timeline-section-header">Section 2: Gemini Enterprise Deployment</div>
+
+                    <div class="module-card" id="card_s2_m1">
+                        <div class="card-status">
+                            <input type="checkbox" id="chk_s2_m1" class="module-checkbox">
+                            <span class="badge badge-s2">M4</span>
+                        </div>
+                        <div class="card-body">
+                            <h4>Workspace Data & Model Armor</h4>
+                            <p>Ground agents with Google Drive and filter prompt safety via Model Armor proxy.</p>
+                            <div class="card-links">
+                                <a href="https://partner.skills.google/paths/3575" target="_blank" class="link-btn">📘 Skill Path (~21.5h)</a>
+                                <a href="https://partner.skills.google/paths/3575/course_templates/1665" target="_blank" class="link-btn">🧪 Challenge Lab (~1.5h)</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="module-card" id="card_s2_m2">
+                        <div class="card-status">
+                            <input type="checkbox" id="chk_s2_m2" class="module-checkbox">
+                            <span class="badge badge-s2">M5</span>
+                        </div>
+                        <div class="card-body">
+                            <h4>Add Agents to Gemini Enterprise</h4>
+                            <p>Inject custom integrations into Workspace apps like Gmail and Docs panels.</p>
+                            <div class="card-links">
+                                <a href="https://partner.skills.google/paths/3581" target="_blank" class="link-btn">📘 Skill Path (~5h)</a>
+                                <a href="https://partner.skills.google/paths/3581/course_templates/1632" target="_blank" class="link-btn">🧪 Challenge Lab (~1.5h)</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="module-card" id="card_s2_m3">
+                        <div class="card-status">
+                            <input type="checkbox" id="chk_s2_m3" class="module-checkbox">
+                            <span class="badge badge-s2">M6</span>
+                        </div>
+                        <div class="card-body">
+                            <h4>Govern Agent Access with GEAP</h4>
+                            <p>Secure agent workloads with service account IAM and Role-Based Access Control (RBAC).</p>
+                            <div class="card-links">
+                                <a href="https://partner.skills.google/paths/3810" target="_blank" class="link-btn">📘 Skill Path (~5.5h)</a>
+                                <a href="https://partner.skills.google/course_templates/1749" target="_blank" class="link-btn">🧪 Challenge Lab (~2h)</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Interactive Agent Terminal (Right Pane) -->
+            <section class="agent-terminal">
+                
+                <!-- Terminal Tabs -->
+                <div class="tab-header">
+                    <button class="tab-btn active" data-tab="chat">💬 Live Mentor Chat</button>
+                    <button class="tab-btn" data-tab="struggles">📋 Gaps & Struggles (<span id="struggleCount">0</span>)</button>
+                    <button class="tab-btn" id="quizTabHeader" data-tab="quiz">📝 Exam Arena</button>
+                </div>
+
+                <!-- Tab Panels -->
+                <div class="tab-body">
+                    
+                    <!-- PANEL 1: Chat Stream -->
+                    <div class="tab-panel active" id="panel-chat">
+                        <div class="chat-wrapper">
+                            <div class="chat-messages" id="chatMessages">
+                                <div class="message system-message">
+                                    <div class="message-sender">🤖 Study Platform Initialized</div>
+                                    <div class="message-text">
+                                        Hello! I'm your L200 Multi-Agent Mentor system, built using the **Google ADK**. 
+                                        As you chat, the **Coaching Agent** will implicitly log any topics you struggle with to help target your reviews.
+                                        You can study any L200 module, ask technical questions, or say **"Quiz me"** to trigger tests!
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="chat-input-area">
+                                <input type="text" id="userInput" placeholder="Ask a question, study a module, or ask to be tested..." autocomplete="off">
+                                <button id="sendBtn" class="btn btn-primary">Send Message</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 2: Gaps & Struggles -->
+                    <div class="tab-panel" id="panel-struggles">
+                        <div class="struggles-header">
+                            <h3>🔍 Cognitive Gaps & Struggles Tracker</h3>
+                            <p>These gaps are captured implicitly from your questions and concerns. Completing the corresponding module's quiz with an 80%+ score will automatically resolve these struggles.</p>
+                        </div>
+                        <div class="struggles-list" id="strugglesList">
+                            <div class="empty-state">
+                                <h3>🎉 No Gaps Detected!</h3>
+                                <p>You haven't displayed any learning gaps. Ask questions in chat or start quizzes to test your understanding.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL 3: Exam Arena -->
+                    <div class="tab-panel" id="panel-quiz">
+                        <div class="quiz-container">
+                            <div class="pane-header">
+                                <h3>📝 Multi-Agent Assessment Center</h3>
+                                <p>Select an L200 Module below to take a diagnostic test designed by the **Quiz Agent**. Score 80%+ to clear active struggles and unlock study milestones!</p>
+                            </div>
+
+                            <div class="quiz-selectors">
+                                <select id="quizModuleSelect">
+                                    <option value="s1_m1">Module 1: Accelerate with Antigravity</option>
+                                    <option value="s1_m2">Module 2: Deploy with ADK</option>
+                                    <option value="s1_m3">Module 3: Evaluate & Hill Climb</option>
+                                    <option value="s2_m1">Module 4: Workspace Data & Model Armor</option>
+                                    <option value="s2_m2">Module 5: Add Agents to Enterprise</option>
+                                    <option value="s2_m3">Module 6: Access Governance (RBAC)</option>
+                                </select>
+                                <button id="startQuizBtn" class="btn btn-primary">Start Exam</button>
+                            </div>
+
+                            <div class="quiz-arena-card" id="quizArenaCard" style="display: none;">
+                                <div class="quiz-question" id="quizQuestionText">Question text goes here?</div>
+                                <div class="quiz-options" id="quizOptionsList">
+                                    <!-- Radio options loaded dynamically -->
+                                </div>
+                                <div class="quiz-actions">
+                                    <button id="submitAnswerBtn" class="btn btn-primary">Submit Answer</button>
+                                </div>
+                                <div class="quiz-feedback" id="quizFeedbackPanel" style="display: none;">
+                                    <div class="feedback-badge" id="feedbackBadge">Correct!</div>
+                                    <p class="feedback-text" id="feedbackText">Explanation detail here.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </section>
+        </main>
+    </div>
+</body>
+</html>

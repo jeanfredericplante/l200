@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+l200_state.json
+.env
